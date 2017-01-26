@@ -14098,6 +14098,74 @@ function TextSourceBuffer() {
             }
         }
     }
+
+    function frameSorter(a, b) {
+        return a[0] - b[0];
+    }
+
+    function getSEIData(raw, startPos, endPos) {
+        var data = [];
+        for (var x = startPos; x < endPos; x++) {
+            if (x + 2 < endPos && raw.getUint8(x) === 0x00 && raw.getUint8(x + 1) === 0x00 && raw.getUint8(x + 2) === 0x03) {
+                data.push(0x00);
+                data.push(0x00);
+                x += 2;
+            } else {
+                data.push(raw.getUint8(x));
+            }
+        }
+        return new DataView(new Uint8Array(data).buffer);
+    }
+
+    function getCCData(raw, startPos, size) {
+        var nalSize;
+        var fieldData = [[], []];
+        for (var i = startPos; i < startPos + size - 5; i++) {
+            nalSize = raw.getUint32(i);
+            if ((raw.getUint8(i + 4) & 0x1F) !== 0x06) {
+                i += nalSize + 3;
+            } else {
+                i += 5;
+                var end = i + nalSize - 2;
+                var sei = getSEIData(raw, i, end);
+                var x = 0;
+                while (x < sei.byteLength) {
+                    var payloadType = 0;
+                    var payloadSize = 0;
+                    var now;
+                    do {
+                        payloadType += now = sei.getUint8(x++);
+                    } while (now === 0xFF);
+                    do {
+                        payloadSize += now = sei.getUint8(x++);
+                    } while (now === 0xFF);
+                    if (payloadType === 4) {
+                        if (sei.getUint32(x) === 3036688711 && sei.getUint32(x + 4) === 1094267907) {
+                            var pos = x + 10;
+                            var ccCount = pos + (sei.getUint8(pos - 2) & 0x1F) * 3;
+                            for (var c = pos; c < ccCount; c += 3) {
+                                var byte = sei.getUint8(c);
+                                if (byte & 0x4) {
+                                    var ccType = byte & 0x3;
+                                    if (ccType === 0 || ccType === 1) {
+                                        var ccData1 = sei.getUint8(c + 1);
+                                        var ccData2 = sei.getUint8(c + 2);
+                                        if ((ccData1 & 0x7f) > 0 || (ccData2 & 0x7f) > 0) {
+                                            fieldData[ccType].push(ccData1, ccData2);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    x += payloadSize;
+                }
+                i = end;
+            }
+        }
+        return fieldData;
+    }
+
     /**
      * Extract CEA-608 data from a buffer of data.
      * @param {ArrayBuffer} data
@@ -14133,28 +14201,17 @@ function TextSourceBuffer() {
         for (var i = 0; i < sampleCount; i++) {
             var sample = trun.samples[i];
             var sampleTime = baseSampleTime + accDuration + sample.sample_composition_time_offset;
-            var cea608Ranges = _externalsCea608Parser2['default'].findCea608Nalus(raw, startPos, sample.sample_size);
-            for (var j = 0; j < cea608Ranges.length; j++) {
-                var ccData = _externalsCea608Parser2['default'].extractCea608DataFromRange(raw, cea608Ranges[j]);
-                for (var k = 0; k < 2; k++) {
-                    if (ccData[k].length > 0) {
-                        allCcData.fields[k].push([sampleTime, ccData[k]]);
-                    }
-                }
-            }
-
+            getCCData(raw, startPos, sample.sample_size).forEach(function (data, idx) {
+                allCcData.fields[idx].push([sampleTime, data]);
+            });
             accDuration += sample.sample_duration;
             startPos += sample.sample_size;
         }
         var endSampleTime = baseSampleTime + accDuration;
         allCcData.startTime = baseSampleTime;
         allCcData.endTime = endSampleTime;
-        allCcData.fields[0].sort(function (a, b) {
-            return a[0] - b[0];
-        });
-        allCcData.fields[1].sort(function (a, b) {
-            return a[0] - b[0];
-        });
+        allCcData.fields[0].sort(frameSorter);
+        allCcData.fields[1].sort(frameSorter);
         return allCcData;
     }
 
