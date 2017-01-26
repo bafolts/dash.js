@@ -356,25 +356,6 @@ function TextSourceBuffer() {
     */
     function extractCea608Data(data) {
 
-        /* Insert [time, data] pairs in order into array. */
-        var insertInOrder = function (arr, time, data) {
-            var len = arr.length;
-            if (len > 0) {
-                if (time >= arr[len - 1][0]) {
-                    arr.push([time, data]);
-                } else {
-                    for (var pos = len - 1; pos >= 0; pos--) {
-                        if (time < arr[pos][0]) {
-                            arr.splice(pos, 0, [time, data]);
-                            break;
-                        }
-                    }
-                }
-            } else {
-                arr.push([time, data]);
-            }
-        };
-
         var isoFile = boxParser.parse(data);
         var moof = isoFile.getBox('moof');
         var tfdt = isoFile.getBox('tfdt');
@@ -408,7 +389,7 @@ function TextSourceBuffer() {
                 var ccData = cea608parser.extractCea608DataFromRange(raw, cea608Ranges[j]);
                 for (var k = 0; k < 2; k++) {
                     if (ccData[k].length > 0) {
-                        insertInOrder(allCcData.fields[k], sampleTime, ccData[k]);
+                        allCcData.fields[k].push([sampleTime, ccData[k]]);
                     }
                 }
             }
@@ -419,6 +400,8 @@ function TextSourceBuffer() {
         var endSampleTime = baseSampleTime + accDuration;
         allCcData.startTime = baseSampleTime;
         allCcData.endTime = endSampleTime;
+        allCcData.fields[0].sort(function (a, b) { return a[0] - b[0]; });
+        allCcData.fields[1].sort(function (a, b) { return a[0] - b[0]; });
         return allCcData;
     }
 
